@@ -20,7 +20,11 @@ class OllamaProvider(LLMProvider):
         payload = {
             "model": self.model,
             "messages": messages,
-            "stream": False
+            "stream": False,
+            "options": {
+                "num_predict": 400,
+                "temperature": 0.3,
+            }
         }
         
         # Ollama natively supports tools in the /api/chat endpoint

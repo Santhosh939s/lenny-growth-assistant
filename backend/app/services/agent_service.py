@@ -26,7 +26,7 @@ You have two search and writing tools available:
 
 Do NOT invoke tools for conversational messages like "Hi", "Thanks", etc.
 When answering with search results, mention the guest or episode. If evidence is insufficient, say so.
-
+Keep answers concise, actionable, and structured (2-3 short paragraphs or bullet points). Avoid repetitive filler.
 Keep your tone helpful, professional, and slightly informal."""
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,9 @@ class AgentService:
 
     def _build_messages(self, history: List[Message], current_content: str) -> List[Dict[str, Any]]:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for msg in history:
+        # Keep last 6 messages to keep prompt small and inference fast on CPU
+        recent_history = history[-6:] if len(history) > 6 else history
+        for msg in recent_history:
             if msg.role not in ("user", "assistant"):
                 continue
             messages.append({"role": msg.role, "content": msg.content or ""})
@@ -152,7 +154,10 @@ class AgentService:
     def _format_chunks_for_llm(self, chunks: List[Dict]) -> str:
         text = ""
         for r in chunks:
-            text += f"Title: {r.get('episode_title')}\nGuest: {r.get('guest')}\nText: {r.get('text')}\n\n"
+            raw_text = (r.get('text') or '').strip()
+            # Excerpt to 400 chars to avoid prompt token bloat on CPU
+            excerpt = raw_text[:400].strip() + ("..." if len(raw_text) > 400 else "")
+            text += f"Episode: {r.get('episode_title')}\nGuest: {r.get('guest')}\nExcerpt: {excerpt}\n\n"
         return text or "No results found."
 
     def _extract_sources(self, chunks: List[Dict], existing: List[Dict]) -> List[Dict]:

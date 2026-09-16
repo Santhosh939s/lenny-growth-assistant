@@ -80,13 +80,7 @@ class Ship30Skill:
         evidence_text = ""
         sources: List[Dict[str, Any]] = []
 
-        for r in chunks:
-            evidence_text += (
-                f"Episode Title: {r.get('episode_title', 'Unknown')}\n"
-                f"Guest: {r.get('guest', 'Unknown')}\n"
-                f"YouTube URL: {r.get('youtube_url') or 'N/A'}\n"
-                f"Excerpt: {r.get('text', '')}\n\n"
-            )
+        for i, r in enumerate(chunks):
             source = {
                 "title":       r.get("episode_title", "Unknown"),
                 "guest":       r.get("guest", "Unknown"),
@@ -95,6 +89,16 @@ class Ship30Skill:
             }
             if not any(s["title"] == source["title"] for s in sources):
                 sources.append(source)
+
+            # Limit evidence prompt to top 3 excerpts, 450 chars each, for fast CPU inference
+            if i < 3:
+                raw_text = (r.get("text") or "").strip()
+                excerpt = raw_text[:450].strip() + ("..." if len(raw_text) > 450 else "")
+                evidence_text += (
+                    f"Episode Title: {r.get('episode_title', 'Unknown')}\n"
+                    f"Guest: {r.get('guest', 'Unknown')}\n"
+                    f"Excerpt: {excerpt}\n\n"
+                )
 
         if not evidence_text.strip():
             evidence_text = (

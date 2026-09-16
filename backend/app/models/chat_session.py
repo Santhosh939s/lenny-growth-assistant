@@ -15,5 +15,5 @@ class ChatSession(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
-    artifacts = relationship("Artifact", back_populates="session", cascade="all, delete-orphan")
+    messages = relationship("Message", back_populates="session", cascade="all, delete-orphan", order_by="Message.created_at")
+    artifacts = relationship("Artifact", back_populates="session", cascade="all, delete-orphan", order_by="Artifact.created_at")

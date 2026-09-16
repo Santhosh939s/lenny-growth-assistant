@@ -22,7 +22,7 @@ class OllamaProvider(LLMProvider):
             "messages": messages,
             "stream": False,
             "options": {
-                "num_predict": 400,
+                "num_predict": 800,
                 "temperature": 0.3,
             }
         }
@@ -32,7 +32,7 @@ class OllamaProvider(LLMProvider):
             payload["tools"] = tools
             
         try:
-            with httpx.Client(timeout=600.0) as client:
+            with httpx.Client(timeout=120.0) as client:
                 response = client.post(f"{self.base_url}/api/chat", json=payload)
                 response.raise_for_status()
                 data = response.json()

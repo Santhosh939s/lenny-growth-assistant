@@ -8,6 +8,7 @@ from app.services.retrieval_service import RetrievalService
 from app.services.skills.ship30 import Ship30Skill
 from app.services.skills.artifact_skill import ArtifactSkill
 from app.models.message import Message
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,8 @@ You have two search and writing tools available:
 2. `write_ship30_article` — Use this ONLY when the user EXPLICITLY asks you to write a Ship 30 for 30 style article.
 
 Do NOT invoke tools for conversational messages like "Hi", "Thanks", etc.
-When answering with search results, mention the guest or episode. If evidence is insufficient, say so.
-Keep answers concise, actionable, and structured (2-3 short paragraphs or bullet points). Avoid repetitive filler.
+When answering with search results, cite the guest or episode from the evidence.
+Always complete your sentences and thoughts fully. Provide structured, actionable answers (2-3 short sections or bullet points with clear takeaways).
 Keep your tone helpful, professional, and slightly informal."""
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,19 @@ def _extract_topic(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+class ResilientProviderProxy:
+    def __init__(self, agent_service: "AgentService"):
+        self._agent = agent_service
+
+    @property
+    def provider_name(self) -> str:
+        return self._agent.get_provider_name()
+
+    def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        return self._agent._chat_with_provider(messages, tools=tools)
+
+
+# ---------------------------------------------------------------------------
 # AgentService
 # ---------------------------------------------------------------------------
 
@@ -133,9 +147,46 @@ class AgentService:
     def __init__(self, db: Session):
         self.db = db
         self.provider = get_llm_provider()
+        self._active_provider_name = self.provider.provider_name
         self.retrieval_service = RetrievalService(db)
-        self.ship30_skill = Ship30Skill(self.provider)
-        self.artifact_skill = ArtifactSkill(self.provider)
+
+        # Automatic fallback to Claude if Ollama encounters a problem
+        self.fallback_provider = None
+        if settings.ANTHROPIC_API_KEY and settings.MODEL_PROVIDER.lower() == "ollama":
+            try:
+                from app.services.llm.anthropic_provider import AnthropicProvider
+                self.fallback_provider = AnthropicProvider()
+                logger.info("Claude (Anthropic) configured as automatic fallback provider.")
+            except Exception as e:
+                logger.warning(f"Could not configure fallback provider: {e}")
+
+        # Skills use the proxy so their generation calls also automatically fall back to Claude if Ollama fails
+        proxy = ResilientProviderProxy(self)
+        self.ship30_skill = Ship30Skill(proxy)
+        self.artifact_skill = ArtifactSkill(proxy)
+
+    def _chat_with_provider(
+        self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """Call primary provider (Ollama). Fall back to Claude if it fails or times out."""
+        try:
+            res = self.provider.chat(messages, tools=tools)
+            self._active_provider_name = self.provider.provider_name
+            return res
+        except Exception as primary_err:
+            if self.fallback_provider:
+                logger.warning(
+                    f"Primary provider {self.provider.provider_name} failed: {primary_err}. "
+                    f"Automatically falling back to {self.fallback_provider.provider_name}."
+                )
+                try:
+                    res = self.fallback_provider.chat(messages, tools=tools)
+                    self._active_provider_name = self.fallback_provider.provider_name
+                    return res
+                except Exception as fallback_err:
+                    logger.error(f"Fallback provider also failed: {fallback_err}")
+                    raise fallback_err
+            raise primary_err
 
     def _build_messages(self, history: List[Message], current_content: str) -> List[Dict[str, Any]]:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -149,7 +200,7 @@ class AgentService:
         return messages
 
     def get_provider_name(self) -> str:
-        return self.provider.provider_name
+        return getattr(self, "_active_provider_name", self.provider.provider_name)
 
     def _format_chunks_for_llm(self, chunks: List[Dict]) -> str:
         text = ""
@@ -223,8 +274,12 @@ class AgentService:
             "content": f"Please answer the question using the following evidence retrieved from Lenny's Podcast episodes:\n\n{tool_text}"
         })
 
-        final = self.provider.chat(messages)
-        return final.get("content", ""), sources, None, None
+        try:
+            final = self._chat_with_provider(messages)
+            return final.get("content", ""), sources, None, None
+        except Exception as e:
+            logger.error(f"Failed to generate answer from evidence: {e}", exc_info=True)
+            return "I gathered the relevant episodes from Lenny's knowledge base, but had an issue synthesizing the answer. Please try again.", sources, None, None
 
     def process_message(
         self, history: List[Message], current_content: str
@@ -268,11 +323,11 @@ class AgentService:
         # Priority 4: LLM native tool call                                    #
         # ------------------------------------------------------------------ #
         try:
-            response = self.provider.chat(messages, tools=ALL_TOOLS)
+            response = self._chat_with_provider(messages, tools=ALL_TOOLS)
         except Exception as e:
             logger.error(f"LLM call with tools failed: {e}. Retrying without tools.")
             try:
-                response = self.provider.chat(messages)
+                response = self._chat_with_provider(messages)
             except Exception as e2:
                 logger.error(f"LLM call failed: {e2}", exc_info=True)
                 return "I apologize, but I encountered an issue communicating with the AI service. Please ensure the model service is running and try again.", [], None, None

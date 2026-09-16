@@ -91,7 +91,10 @@ function App() {
     try {
       const res = await fetch(`${API_SESSIONS}/${id}`)
       const data = await res.json()
-      setMessages(data.messages || [])
+      const sorted = (data.messages || []).slice().sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      )
+      setMessages(sorted)
     } catch (e) {
       console.error('Failed to fetch messages', e)
     }

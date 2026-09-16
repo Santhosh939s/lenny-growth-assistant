@@ -93,7 +93,8 @@ _HTML_ARTIFACT_PATTERNS = re.compile(
 
 
 def _is_ship30_request(text: str) -> bool:
-    return bool(_SHIP30_PATTERNS.search(text)) and not _is_artifact_request(text)
+    is_art, _ = _is_artifact_request(text)
+    return bool(_SHIP30_PATTERNS.search(text)) and not is_art
 
 
 def _is_artifact_request(text: str) -> Tuple[bool, str]:
@@ -269,13 +270,20 @@ class AgentService:
         sources = self._extract_sources(chunks, [])
         tool_text = self._format_chunks_for_llm(chunks)
 
-        messages.append({
-            "role": "user",
-            "content": f"Please answer the question using the following evidence retrieved from Lenny's Podcast episodes:\n\n{tool_text}"
-        })
+        synthesis_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Question: {query}\n\n"
+                    f"Evidence from Lenny's Podcast episodes:\n{tool_text}\n\n"
+                    f"Please synthesize a clear, actionable answer to the question using the evidence provided above. Complete your thoughts and cite the guest or episode."
+                )
+            }
+        ]
 
         try:
-            final = self._chat_with_provider(messages)
+            final = self._chat_with_provider(synthesis_messages)
             return final.get("content", ""), sources, None, None
         except Exception as e:
             logger.error(f"Failed to generate answer from evidence: {e}", exc_info=True)

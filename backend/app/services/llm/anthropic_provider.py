@@ -55,6 +55,25 @@ class AnthropicProvider(LLMProvider):
             else:
                 anthropic_messages.append({"role": role, "content": msg["content"]})
 
+        # Merge consecutive messages with identical roles for Anthropic compliance
+        merged_messages = []
+        for msg in anthropic_messages:
+            if merged_messages and merged_messages[-1]["role"] == msg["role"]:
+                prev = merged_messages[-1]
+                prev_content = prev["content"]
+                curr_content = msg["content"]
+                if isinstance(prev_content, str) and isinstance(curr_content, str):
+                    prev["content"] = prev_content + "\n\n" + curr_content
+                elif isinstance(prev_content, list) and isinstance(curr_content, list):
+                    prev["content"] = prev_content + curr_content
+                elif isinstance(prev_content, list):
+                    prev["content"] = prev_content + [{"type": "text", "text": str(curr_content)}]
+                else:
+                    prev["content"] = [{"type": "text", "text": str(prev_content)}, {"type": "text", "text": str(curr_content)}]
+            else:
+                merged_messages.append(msg)
+        anthropic_messages = merged_messages
+
         # Extract system prompt if present
         system_prompt = next((m["content"] for m in messages if m["role"] == "system"), None)
 
